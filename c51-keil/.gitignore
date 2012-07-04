@@ -1,0 +1,5 @@
+.sconsign.dblite
+*.hex
+fte.dsk
+build
+*.pyc

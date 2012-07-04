@@ -1,0 +1,135 @@
+#!python
+
+# imports
+from glob import glob
+import os
+from tools.keilwrap import c51, c51_asm, a51, bl51, oh51, get_keil_root
+
+# Keil's root directory. Typically C:\Keil
+if os.name == 'nt':
+    if 0:   # change this conditional to `if 1` if you don't want to use auto-detect of keil tools location
+        KEIL_ROOT = 'C:\\Keil'
+    else:
+        KEIL_ROOT = get_keil_root() or 'C:\\Keil'    # reads from registry (reference from uV2)
+else:
+    KEIL_ROOT = ''
+
+
+env_vars = {'C51INC': '%(KEIL_ROOT)s\\C51\\INC\\Winbond\\;%(KEIL_ROOT)s\\C51\\INC\\' % globals(),
+            'C51LIB': '%(KEIL_ROOT)s\\C51\\LIB' % globals(),
+            'CPU_TYPE': 'W77E58',
+            'CPU_VENDOR': 'Winbond',
+            'UV2_TARGET': 'Test',
+            'CPU_XTAL': '0x02625A00',
+            'PATH': os.environ['PATH']+";%(KEIL_ROOT)s\\C51\\Bin" % globals(),
+           }
+
+# FILES
+c_common = ['main.c', 'NS.c']
+c_51 = []
+a_51 = []
+c_51_asm = []
+
+
+C51_SOURCES = {'OPTIMIZE(7,SPEED) CODE': c_common + c_51,
+              }
+
+A51_SOURCES = {'SET(SMALL) EP': a_51,
+              }
+C51_ASM_SOURCES = {'OT(7,SPEED) ': c_51_asm,
+                  }
+
+OBJ_DIR = 'build/Obj'
+LST_DIR = 'build/Lst'
+
+ABS_FILE = 'test'
+
+C51_FLAGS = 'OPTIMIZE(7,SPEED) CODE'
+A51_FLAGS = 'SET(SMALL) EP'
+BL51_FLAGS = (
+    'RAMSIZE(256) '
+    'CODE(0X0000-0XFFFF) '
+    'XDATA(0X0000-0XFFFF) '
+    'NOLINES'
+    )
+
+
+##
+# MAKE ENVIRONMENT FOR KEIL'S TOOLS. DO NOT MODIFY!
+env = Environment()
+env['BUILDERS'] = {'C51': Builder(action = c51, suffix = '.obj',
+                                  src_suffix = '.c', source_scanner = CScanner),
+                   'A51': Builder(action = a51, suffix = '.obj',
+                                  src_suffix = '.a51', source_scanner = CScanner),
+                   'C51_ASM': Builder(action = c51_asm, suffix = '.src',
+                                      src_suffix = '.c', source_scanner = CScanner),
+                   'BL51': Builder(action = bl51),
+                   'OH51': Builder(action = oh51),
+                  }
+env['ENV'] = env_vars
+env['C51FLAGS'] = C51_FLAGS
+env['A51FLAGS'] = A51_FLAGS
+env['BL51FLAGS'] = BL51_FLAGS
+
+#/ENVIRONMENT
+##
+
+
+##
+# HELPER FUNCTIONS
+def make_target_path(source, target_dir, suffix):
+    """Make target path based on source name, target dir and suffix
+    """
+    return os.path.join(target_dir or '', os.path.splitext(os.path.basename(source))[0] + suffix)
+
+def make_target_list(source, obj_suffix, lst_suffix):
+    """Make list of targets
+    (object file in OBJ_DIR and listing file in LST_DIR)
+    """
+    target = [make_target_path(source, OBJ_DIR, obj_suffix)]
+    if LST_DIR != None:
+        target.append(make_target_path(source, LST_DIR, lst_suffix))
+    return target
+
+
+##
+# BUILDING PROCESS
+
+objs = []       # List of object files
+
+# COMPILING
+for flags in C51_SOURCES:
+    env_c51 = env.Clone()
+    env_c51['C51FLAGS'] = flags
+    for src in C51_SOURCES[flags]:
+        t = make_target_list(src, '.obj', '.lst')
+        env_c51.C51(t, source=src)
+        objs.append(t[0])
+
+for flags in A51_SOURCES:
+    env_a51 = env.Clone()
+    env_a51['A51FLAGS'] = flags
+    for src in A51_SOURCES[flags]:
+        t = make_target_list(src, '.obj', '.lst')
+        env_a51.A51(t, source=src)
+        objs.append(t[0])
+
+for flags in C51_ASM_SOURCES:
+    env_c51_asm = env.Clone()
+    env_c51_asm['C51FLAGS'] = flags
+    for src in C51_ASM_SOURCES[flags]:
+        t = make_target_list(src, '.src', '.ls1')
+        env_c51_asm.C51_ASM(t, source=src)
+        t1 = make_target_list(src, '.obj', '.lst')
+        env_c51_asm.A51(t1, source=t[0])
+        objs.append(t1[0])
+
+# LINKING
+t = make_target_list(ABS_FILE, '.abs', '.m51')
+env.BL51(target=t, source=objs)
+
+# CONVERT TO HEX
+hex_file = make_target_path(ABS_FILE, OBJ_DIR, '.hex')
+hex_ = env.OH51(target=hex_file, source=t[0])
+
+env.Default(hex_)
